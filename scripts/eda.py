@@ -4,7 +4,6 @@ Writes figures to reports/figures and all numbers to reports/eda_stats.json.
 """
 import argparse
 import json
-import warnings
 from pathlib import Path
 
 import matplotlib.pyplot as plt
@@ -13,7 +12,8 @@ import polars as pl
 from matplotlib.ticker import PercentFormatter
 
 from seqrec_rl import plotting
-from seqrec_rl.data import DAY, LISTEN_PLUS_PCT, SESSION_GAP, TemporalSplit, listens, load_events
+from seqrec_rl.data import (DAY, FEEDBACK_MARGIN_SEC, LISTEN_PLUS_PCT, SESSION_GAP, TemporalSplit,
+                            flag_listens, listens, load_events, match_feedback)
 
 LENGTH_EDGES = [0, 120, 150, 180, 210, 240, 300, 420, 600, 10**7]
 LENGTH_LABELS = ["<2", "2-2.5", "2.5-3", "3-3.5", "3.5-4", "4-5", "5-7", "7-10", ">10"]
@@ -38,25 +38,11 @@ def with_labels(t: pl.DataFrame, col: str, labels: list) -> pl.DataFrame:
     return t.with_columns(pl.Series(col, [labels[i] for i in t[col]]))
 
 
-def match_feedback(lis: pl.DataFrame, events: pl.DataFrame, kind: str) -> pl.DataFrame:
-    """Match each like/dislike to the latest listen of the same track at or before it."""
-    fb = (events.filter(pl.col("event_type") == kind)
-          .select("uid", "item_id", pl.col("timestamp").alias("fb_ts"))
-          .sort("fb_ts"))
-    right = lis.select("uid", "item_id", "timestamp", "track_length_seconds").sort("timestamp")
-    with warnings.catch_warnings():
-        # both sides are sorted by time globally, which is what join_asof needs
-        warnings.filterwarnings("ignore", message="Sortedness of columns")
-        m = fb.join_asof(right, left_on="fb_ts", right_on="timestamp", by=["uid", "item_id"],
-                         strategy="backward")
-    return m.with_columns(delay_sec=pl.col("fb_ts") - pl.col("timestamp"))
-
-
 def feedback_delay_stats(m: pl.DataFrame) -> dict:
     n = m.height
     matched = m.filter(pl.col("timestamp").is_not_null())
     d = matched["delay_sec"]
-    within_track = (matched["delay_sec"] <= matched["track_length_seconds"] + 60).sum()
+    within_track = (matched["delay_sec"] <= matched["track_length_seconds"] + FEEDBACK_MARGIN_SEC).sum()
     return {
         "n": n,
         "share_without_prior_listen": 1 - matched.height / n,
@@ -64,15 +50,6 @@ def feedback_delay_stats(m: pl.DataFrame) -> dict:
         "share_within_1h": (d <= 3600).sum() / n,
         "delay_sec": quantiles(d.cast(pl.Float64)),
     }
-
-
-def flag_listens(lis: pl.DataFrame, m: pl.DataFrame, name: str) -> pl.DataFrame:
-    hits = (m.filter(pl.col("timestamp").is_not_null()
-                     & (pl.col("delay_sec") <= pl.col("track_length_seconds") + 60))
-            .select("uid", "item_id", "timestamp").unique()
-            .with_columns(pl.lit(True).alias(name)))
-    return (lis.join(hits, on=["uid", "item_id", "timestamp"], how="left")
-            .with_columns(pl.col(name).fill_null(False)))
 
 
 def plot_daily(lis: pl.DataFrame, split: TemporalSplit, out: Path) -> None:
@@ -269,7 +246,6 @@ def main() -> None:
     plotting.setup()
 
     events = load_events(Path(args.data) / "multi_event.parquet")
-    events = events.with_columns(pl.col("timestamp").cast(pl.Int32))
     split = TemporalSplit.default()
     stats = {
         "schema": {k: str(v) for k, v in events.schema.items()},
@@ -280,10 +256,7 @@ def main() -> None:
         "n_items": events["item_id"].n_unique(),
     }
 
-    lis = (listens(events)
-           .with_columns(pl.col("played_ratio_pct").cast(pl.Int32),
-                         pl.col("track_length_seconds").cast(pl.Int32))
-           .sort("uid", "timestamp"))
+    lis = listens(events)
     stats["n_listens"] = lis.height
     stats["n_listened_items"] = lis["item_id"].n_unique()
     stats["played_ratio"] = {
@@ -348,7 +321,7 @@ def main() -> None:
     targets = (test_lis.filter(pl.col("played_ratio_pct") >= LISTEN_PLUS_PCT)
                .join(first_seen, on=["uid", "item_id"])
                .with_columns(seen=pl.col("first_ts") < split.val_end))
-    hist_users = split.history_for_test(lis)["uid"].unique()
+    hist_users = split.history(lis, "test")["uid"].unique()
     stats["test"] = {
         "n_listens": test_lis.height,
         "n_users_with_listens": test_lis["uid"].n_unique(),
