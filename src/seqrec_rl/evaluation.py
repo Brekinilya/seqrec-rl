@@ -130,6 +130,8 @@ def ranking_metrics(recs: np.ndarray, targets: list[np.ndarray], n_targets: np.n
         idcg = np.cumsum(disc)[denom - 1]
         prec = np.cumsum(h, 1) / np.arange(1, k + 1)
         res[f"recall@{k}"] = float((h.sum(1) / denom).mean())
+        # hits / |T|, the definition behind the numbers in the Yambda paper
+        res[f"recall_raw@{k}"] = float((h.sum(1) / n).mean())
         res[f"ndcg@{k}"] = float((dcg / idcg).mean())
         res[f"map@{k}"] = float(((prec * h).sum(1) / denom).mean())
         res[f"hitrate@{k}"] = float(h.any(1).mean())

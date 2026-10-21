@@ -7,7 +7,7 @@
 | этап | что | статус |
 |---|---|---|
 | 0 | данные, разбиение по времени, EDA — [`reports/eda.md`](reports/eda.md) | готово |
-| 1 | базовая GPT-2 модель next-item prediction и бейзлайны | — |
+| 1 | базовая GPT-2 модель next-item prediction и бейзлайны — [`reports/stage1.md`](reports/stage1.md) | готово |
 | 2 | reward model (доля дослушивания, лайки, долгосрочные сигналы) | — |
 | 3 | RL-дообучение (GRPO, точная KL-оптимальная политика, DPO) | — |
 | 4 | генерация на несколько шагов | — |
@@ -35,11 +35,32 @@ EDA (около 2 минут на машине с 16 ГБ RAM):
 .venv/Scripts/python scripts/eda.py
 ```
 
+Этап 1. Словарь и токенизированный лог (~1 мин), бейзлайны (~4 мин), обучение GPT-2 (~2.5 ч на RTX 3070 Laptop 8 ГБ), оценка и таблицы:
+
+```bash
+.venv/Scripts/python scripts/prepare_data.py
+.venv/Scripts/python scripts/baselines.py
+.venv/Scripts/python scripts/train_base.py --out checkpoints/base
+.venv/Scripts/python scripts/evaluate_model.py --ckpt checkpoints/base/best.pt --name GPT2 --parts val test
+.venv/Scripts/python scripts/report_stage1.py --models GPT2
+```
+
+Если обучение прервалось, его можно продолжить с последнего чекпойнта: `--resume checkpoints/base/last.pt`.
+
+Тесты (нужен GPU):
+
+```bash
+.venv/Scripts/python -m pytest tests
+```
+
 ## Структура
 
 ```
-src/seqrec_rl/   загрузка данных, разбиение, стиль графиков
+src/seqrec_rl/   данные и разбиение, модель и лосс, протокол оценки, бейзлайны, стиль графиков
 scripts/         запускаемые шаги пайплайна
-reports/         отчёты, графики, числа EDA
-data/            скачанные данные (не в git)
+tests/           проверки лосса и нарезки окон
+reports/         отчёты по этапам, графики, результаты в JSON
+data/            скачанные и подготовленные данные (не в git)
+checkpoints/     веса моделей (не в git)
+runs/            логи и сохранённые выдачи (не в git)
 ```

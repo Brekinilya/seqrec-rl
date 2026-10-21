@@ -43,12 +43,12 @@ def main() -> None:
     p.add_argument("--chunk", type=int, default=2048)
     p.add_argument("--seed", type=int, default=0)
     p.add_argument("--max-steps", type=int, default=0, help="stop early (smoke tests)")
+    p.add_argument("--resume", default="", help="checkpoint to continue from (same args)")
     args = p.parse_args()
 
     torch.manual_seed(args.seed)
     out = Path(args.out)
     out.mkdir(parents=True, exist_ok=True)
-    (out / "args.json").write_text(json.dumps(vars(args), indent=2))
     log = open(out / "log.jsonl", "a", encoding="utf-8")
 
     data = Path(args.data)
@@ -71,30 +71,58 @@ def main() -> None:
                             lr=args.lr, betas=(0.9, 0.98), fused=True)
     steps_per_epoch = sampler.n_batches(args.batch)
     total = args.epochs * steps_per_epoch
-
-    def lr_at(step):
-        if step < args.warmup:
-            return step / args.warmup
-        t = min(1.0, (step - args.warmup) / max(1, total - args.warmup))
-        return 0.1 + 0.9 * 0.5 * (1 + math.cos(math.pi * t))
-
-    sched = torch.optim.lr_scheduler.LambdaLR(opt, lr_at)
     eval_every = steps_per_epoch // args.evals_per_epoch
-    print(f"params {sum(p_.numel() for p_ in model.parameters()) / 1e6:.1f}M, "
-          f"{steps_per_epoch} steps/epoch, {total} total", flush=True)
 
-    step, best, t0 = 0, -1.0, time.time()
+    step, best, rewarm_from = 0, -1.0, None
+    if args.resume:
+        ckpt = torch.load(args.resume, map_location="cpu", weights_only=False)
+        model.load_state_dict(ckpt["state"])
+        step = ckpt["step"]
+        if "optim" in ckpt:
+            opt.load_state_dict(ckpt["optim"])
+        else:
+            rewarm_from = step  # fresh Adam moments: short warmup again
+        if (out / "best.pt").exists():
+            best = torch.load(out / "best.pt", map_location="cpu", weights_only=False)["val"]["ndcg@10"]
+        log.close()
+        # forget log records written by the interrupted run after the checkpoint
+        lines = (out / "log.jsonl").read_text(encoding="utf-8").splitlines()
+        kept = [line for line in lines if json.loads(line).get("step", 0) <= step]
+        (out / "log.jsonl").write_text("".join(line + "\n" for line in kept), encoding="utf-8")
+        log = open(out / "log.jsonl", "a", encoding="utf-8")
+        log.write(json.dumps({"resume_from": step}) + "\n")
+    else:
+        (out / "args.json").write_text(json.dumps(vars(args), indent=2))
+
+    def lr_at(s):
+        if s < args.warmup:
+            f = s / args.warmup
+        else:
+            t = min(1.0, (s - args.warmup) / max(1, total - args.warmup))
+            f = 0.1 + 0.9 * 0.5 * (1 + math.cos(math.pi * t))
+        if rewarm_from is not None:
+            f *= min(1.0, (s - rewarm_from + 1) / 200)
+        return args.lr * f
+
+    print(f"params {sum(p_.numel() for p_ in model.parameters()) / 1e6:.1f}M, "
+          f"{steps_per_epoch} steps/epoch, {total} total, starting at {step}", flush=True)
+
+    t0 = time.time()
     run_loss, run_n, run_tok = 0.0, 0, 0
-    for epoch in range(args.epochs):
+    epoch = round(step / steps_per_epoch)
+    done = False
+    while not done:
+        sampler.rng = np.random.default_rng(args.seed + epoch)
         for batch in sampler.batches(args.batch):
             model.train()
+            for g in opt.param_groups:
+                g["lr"] = lr_at(step)
             x = torch.from_numpy(batch).cuda(non_blocking=True)
             with torch.autocast("cuda", dtype=torch.bfloat16):
                 loss, n = next_item_loss(model, x[:, :-1], x[:, 1:], args.chunk)
             loss.backward()
             torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
             opt.step()
-            sched.step()
             opt.zero_grad(set_to_none=True)
             step += 1
             run_loss += loss.item() * n
@@ -102,28 +130,28 @@ def main() -> None:
             run_tok += n
 
             if step % 200 == 0:
-                rec = {"step": step, "epoch": epoch, "loss": run_loss / run_n, "lr": sched.get_last_lr()[0],
+                rec = {"step": step, "epoch": epoch, "loss": run_loss / run_n, "lr": lr_at(step),
                        "tok_per_s": run_tok / (time.time() - t0), "elapsed_min": (time.time() - t0) / 60}
                 print(json.dumps(rec), flush=True)
                 log.write(json.dumps(rec) + "\n")
                 log.flush()
                 run_loss, run_n = 0.0, 0
 
-            stop = args.max_steps and step >= args.max_steps
-            if step % eval_every == 0 or stop:
+            done = step >= total or bool(args.max_steps and step >= args.max_steps)
+            if step % eval_every == 0 or done:
                 res, _ = evaluate(GPTRecommender(model), val, info)
                 summary = {"step": step, "epoch": epoch, "val": val_summary(res)}
                 print(json.dumps(summary), flush=True)
                 log.write(json.dumps(summary) + "\n")
                 log.flush()
-                save_model(model, out / "last.pt", step=step, val=summary["val"], args=vars(args))
+                save_model(model, out / "last.pt", step=step, val=summary["val"], args=vars(args),
+                           optim=opt.state_dict())
                 if summary["val"]["ndcg@10"] > best:
                     best = summary["val"]["ndcg@10"]
                     save_model(model, out / "best.pt", step=step, val=summary["val"], args=vars(args))
-            if stop:
+            if done:
                 break
-        if stop:
-            break
+        epoch += 1
     log.close()
 
 
