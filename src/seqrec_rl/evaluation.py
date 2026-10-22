@@ -138,6 +138,18 @@ def ranking_metrics(recs: np.ndarray, targets: list[np.ndarray], n_targets: np.n
     return res
 
 
+def per_user_metric(recs: np.ndarray, targets: list[np.ndarray], n_targets: np.ndarray, k: int,
+                    metric: str = "ndcg") -> np.ndarray:
+    """Per-user NDCG@k or Recall@k (NaN for users without targets), for paired comparisons."""
+    disc = 1.0 / np.log2(np.arange(2, k + 2))
+    out = np.full(len(recs), np.nan)
+    for i in np.flatnonzero(n_targets > 0):
+        h = np.isin(recs[i, :k], targets[i])
+        denom = min(n_targets[i], k)
+        out[i] = (h * disc).sum() / disc[:denom].sum() if metric == "ndcg" else h.sum() / denom
+    return out
+
+
 def gini(counts: np.ndarray) -> float:
     x = np.sort(counts.astype(np.float64))
     n = len(x)
