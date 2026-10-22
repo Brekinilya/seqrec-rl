@@ -8,7 +8,7 @@
 |---|---|---|
 | 0 | данные, разбиение по времени, EDA — [`reports/eda.md`](reports/eda.md) | готово |
 | 1 | базовая GPT-2 модель next-item prediction и бейзлайны — [`reports/stage1.md`](reports/stage1.md) | готово |
-| 2 | reward model (доля дослушивания, лайки, долгосрочные сигналы) | — |
+| 2 | reward model (доля дослушивания, лайки, долгосрочные сигналы) — [`reports/stage2.md`](reports/stage2.md) | готово |
 | 3 | RL-дообучение (GRPO, точная KL-оптимальная политика, DPO) | — |
 | 4 | генерация на несколько шагов | — |
 | 5 | итоговый отчёт | — |
@@ -47,6 +47,18 @@ EDA (около 2 минут на машине с 16 ГБ RAM):
 
 Если обучение прервалось, его можно продолжить с последнего чекпойнта: `--resume checkpoints/base/last.pt`.
 
+Этап 2. Признаки и метки отклика (~1.5 мин), ансамбль reward model (4 модели, ~35 мин; скрипт можно перезапускать — готовые модели пропускаются, прерванные продолжаются), оценка с бейзлайнами (~10 мин), жадные списки по reward model (~3 мин), таблицы:
+
+```bash
+.venv/Scripts/python scripts/prepare_rm_data.py
+powershell -ExecutionPolicy Bypass -File scripts/train_rm_ensemble.ps1
+.venv/Scripts/python scripts/evaluate_rm.py
+.venv/Scripts/python scripts/rm_preferences.py
+.venv/Scripts/python scripts/report_stage2.py
+```
+
+Обучение на ноутбуке стоит запускать от сети: от батареи GPU ограничен ~30 Вт, и шаг идёт в 7 раз медленнее.
+
 Тесты (нужен GPU):
 
 ```bash
@@ -56,7 +68,8 @@ EDA (около 2 минут на машине с 16 ГБ RAM):
 ## Структура
 
 ```
-src/seqrec_rl/   данные и разбиение, модель и лосс, протокол оценки, бейзлайны, стиль графиков
+src/seqrec_rl/   данные и разбиение, модель и лосс, протокол оценки, бейзлайны,
+                 reward model и её метки, бейзлайны отклика, стиль графиков
 scripts/         запускаемые шаги пайплайна
 tests/           проверки лосса и нарезки окон
 reports/         отчёты по этапам, графики, результаты в JSON
