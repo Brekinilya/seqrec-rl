@@ -131,14 +131,18 @@ class WindowSampler:
         w = np.concatenate(out)
         return w[self.rng.permutation(len(w))]
 
-    def batches(self, batch_size: int):
+    def batches(self, batch_size: int, aux: np.ndarray | None = None):
+        """Token windows; with `aux` (aligned with tokens) yields (tokens, aux) windows."""
         w = self.windows()
         for i in range(0, len(w), batch_size):
             chunk = w[i:i + batch_size]
             batch = np.full((len(chunk), self.seq_len + 1), PAD, dtype=np.int64)
+            extra = None if aux is None else np.zeros((len(chunk), self.seq_len + 1), dtype=aux.dtype)
             for j, (s, e) in enumerate(chunk):
                 batch[j, :e - s] = self.tokens[s:e]
-            yield batch
+                if extra is not None:
+                    extra[j, :e - s] = aux[s:e]
+            yield batch if extra is None else (batch, extra)
 
     def n_batches(self, batch_size: int) -> int:
         n = sum(int(np.ceil((e - s - 1) / self.seq_len)) + 1 for s, e in zip(self.offsets[:-1], self.offsets[1:]))

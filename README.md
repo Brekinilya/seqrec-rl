@@ -9,7 +9,7 @@
 | 0 | данные, разбиение по времени, EDA — [`reports/eda.md`](reports/eda.md) | готово |
 | 1 | базовая GPT-2 модель next-item prediction и бейзлайны — [`reports/stage1.md`](reports/stage1.md) | готово |
 | 2 | reward model (доля дослушивания, лайки, долгосрочные сигналы) — [`reports/stage2.md`](reports/stage2.md) | готово |
-| 3 | RL-дообучение (GRPO, точная KL-оптимальная политика, DPO) | — |
+| 3 | RL-дообучение: аналитическая π\*, RL с точным и сэмплированным градиентом, Positive-CE — [`reports/stage3.md`](reports/stage3.md) | готово |
 | 4 | генерация на несколько шагов | — |
 | 5 | итоговый отчёт | — |
 
@@ -58,6 +58,16 @@ powershell -ExecutionPolicy Bypass -File scripts/train_rm_ensemble.ps1
 ```
 
 Обучение на ноутбуке стоит запускать от сети: от батареи GPU ограничен ~30 Вт, и шаг идёт в 7 раз медленнее.
+
+Этап 3. Масштабы наград (~1 мин), прогон аналитической π\* по сетке наград и β (113 политик, ~15 мин), RL-прогоны и Positive-CE (~55 мин; скрипт пропускает готовые), оценка обученных политик, графики и таблицы:
+
+```bash
+.venv/Scripts/python scripts/rl_scales.py
+.venv/Scripts/python scripts/rl_sweep.py
+powershell -ExecutionPolicy Bypass -File scripts/rl_runs.ps1
+.venv/Scripts/python scripts/rl_sweep.py --no-grid --out reports/results/rl_policies.json --policies ratio:RL-exact-b1=checkpoints/rl/ratio_b1_exact/policy.pt ratio:RL-exact-b0.3=checkpoints/rl/ratio_b0.3_exact/policy.pt ratio:RL-sampled-b0.3=checkpoints/rl/ratio_b0.3_sampled/policy.pt ratio:Positive-CE=checkpoints/rl/positive_ce/policy.pt like:RL-exact-b1=checkpoints/rl/like_b1_exact/policy.pt relisten:RL-exact-b0.3=checkpoints/rl/relisten_b0.3_exact/policy.pt
+.venv/Scripts/python scripts/report_stage3.py
+```
 
 Тесты (нужен GPU):
 
