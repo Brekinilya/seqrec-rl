@@ -10,7 +10,7 @@
 | 1 | базовая GPT-2 модель next-item prediction и бейзлайны — [`reports/stage1.md`](reports/stage1.md) | готово |
 | 2 | reward model (доля дослушивания, лайки, долгосрочные сигналы) — [`reports/stage2.md`](reports/stage2.md) | готово |
 | 3 | RL-дообучение: аналитическая π\*, RL с точным и сэмплированным градиентом, Positive-CE — [`reports/stage3.md`](reports/stage3.md) | готово |
-| 4 | генерация на несколько шагов | — |
+| 4 | генерация на несколько шагов: дрейф контекста, оценка награды, Next-K против Top-K — [`reports/stage4.md`](reports/stage4.md) | готово |
 | 5 | итоговый отчёт | — |
 
 ## Воспроизведение
@@ -67,6 +67,13 @@ powershell -ExecutionPolicy Bypass -File scripts/train_rm_ensemble.ps1
 powershell -ExecutionPolicy Bypass -File scripts/rl_runs.ps1
 .venv/Scripts/python scripts/rl_sweep.py --no-grid --out reports/results/rl_policies.json --policies ratio:RL-exact-b1=checkpoints/rl/ratio_b1_exact/policy.pt ratio:RL-exact-b0.3=checkpoints/rl/ratio_b0.3_exact/policy.pt ratio:RL-sampled-b0.3=checkpoints/rl/ratio_b0.3_sampled/policy.pt ratio:Positive-CE=checkpoints/rl/positive_ce/policy.pt like:RL-exact-b1=checkpoints/rl/like_b1_exact/policy.pt relisten:RL-exact-b0.3=checkpoints/rl/relisten_b0.3_exact/policy.pt
 .venv/Scripts/python scripts/report_stage3.py
+```
+
+Этап 4. Пятишаговые развёртки для 2 000 тестовых пользователей (~15 мин) и графики:
+
+```bash
+.venv/Scripts/python scripts/rollouts.py
+.venv/Scripts/python scripts/report_stage4.py
 ```
 
 Тесты (нужен GPU):
